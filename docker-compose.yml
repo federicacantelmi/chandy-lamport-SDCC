@@ -7,7 +7,6 @@ services:
     env_file:
       - .env
     command: [ "./mainNode", "1", "${INITIAL_BALANCE_PROCESS1}" ]
-    #${INITIAL_BALANCE_PROCESS1}
 
   process2:
     container_name: process2

@@ -70,12 +70,13 @@ for snapshot_file in $(find "$SNAPSHOT_DIR" -type f -name "snapshot_*"); do
     fi
 
     echo "Analizzando il file: $snapshot_file con snapshot ID: $snapshot_id"
+    cat $snapshot_file
 
     # Estrazione del valore di InternalState e ChannelState
     internal_state=$(jq '.intern_state' "$snapshot_file")
-    echo " $internal_state"
+
     channel_state=$(jq '[.channel_state[] | select(type == "array") | .[]] | add' "$snapshot_file")
-    echo "$channel_state"
+
     # Verifica e somma dei valori estratti
     if [[ -n "$internal_state" && -n "$channel_state" ]]; then
         snapshot_sums["$snapshot_id"]=$((snapshot_sums["$snapshot_id"] + internal_state + channel_state))
@@ -99,12 +100,3 @@ for snapshot_id in "${!snapshot_sums[@]}"; do
         echo "Errore: Il bilancio totale dello Snapshot con ID $snapshot_id ($total_snapshot_balance) non corrisponde al bilancio iniziale ($initial_balance)."
     fi
 done
-
-#echo "Arresto dei container Docker..."
-# docker-compose down
-
-#if [ $? -ne 0 ]; then
- #   echo "Errore: Arresto dei container fallito."
-#else
- #   echo "Container arrestati e rimossi correttamente."
-#fi

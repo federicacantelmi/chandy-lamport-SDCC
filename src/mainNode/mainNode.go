@@ -124,7 +124,7 @@ func init() {
 		log.Fatal("Error loading .env file: ", err)
 	}*/
 	NumProcesses, _ = strconv.Atoi(os.Getenv("NUM_PROCESS"))
-	TcpStartingPort, _ = strconv.Atoi(os.Getenv("TCP_STARTING_PORT"))
+	TcpStartingPort, _ = strconv.Atoi(os.Getenv("TCP_PORT"))
 	RPCPort, _ = strconv.Atoi(os.Getenv("RPC_PORT"))
 	MaxRetries, _ = strconv.Atoi(os.Getenv("MAX_RETRIES"))
 }
