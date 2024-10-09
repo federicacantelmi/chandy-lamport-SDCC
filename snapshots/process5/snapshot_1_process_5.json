@@ -1,0 +1,11 @@
+{
+  "snapshot_id": 1,
+  "process_id": 5,
+  "intern_state": 5260,
+  "channel_state": {
+    "1": "empty",
+    "2": "empty",
+    "3": "empty",
+    "4": "empty"
+  }
+}

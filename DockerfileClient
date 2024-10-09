@@ -1,0 +1,14 @@
+# Fase di build
+FROM golang:latest
+
+WORKDIR /app
+
+# Copiare i file di modulo e scaricare le dipendenze
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copiare il resto del codice sorgente
+COPY . .
+
+# Compilare il client
+RUN go build -o mainClient ./src/mainClient/
