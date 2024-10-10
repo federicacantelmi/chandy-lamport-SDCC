@@ -26,24 +26,6 @@ services:
       - .env
     command: [ "./mainNode", "3", "${INITIAL_BALANCE_PROCESS3}" ]
 
-  process4:
-    container_name: process4
-    build:
-      context: .
-      dockerfile: DockerfileNode
-    env_file:
-      - .env
-    command: [ "./mainNode", "4", "${INITIAL_BALANCE_PROCESS4}" ]
-
-  process5:
-    container_name: process5
-    build:
-      context: .
-      dockerfile: DockerfileNode
-    env_file:
-      - .env
-    command: [ "./mainNode", "5", "${INITIAL_BALANCE_PROCESS5}" ]
-
   client:
     container_name: client
     build:
@@ -55,6 +37,4 @@ services:
       - process1
       - process2
       - process3
-      - process4
-      - process5
     command: [ "./mainClient" ]

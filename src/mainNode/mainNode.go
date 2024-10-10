@@ -15,10 +15,10 @@ import (
 )
 
 var (
-	NumProcesses    int
-	TcpStartingPort int
-	RPCPort         int
-	MaxRetries      int
+	NumProcesses int
+	TcpPort      int
+	RPCPort      int
+	MaxRetries   int
 )
 
 type Node struct {
@@ -81,7 +81,6 @@ func NewNode(processID int, tcpStartingPort int, processNumber int, initialBalan
 			Port: tcpStartingPort + i,
 			Zone: "",
 		}
-		// fmt.Println("Processo " + strconv.Itoa(i) + " con tcp addr: " + strconv.Itoa(tcpStartingPort+i) + " " + utils.ProcessList[i].IP.String())
 	}
 
 	fmt.Println("Inizializzazione processo " + strconv.Itoa(processID))
@@ -119,12 +118,8 @@ func termination(node *Node) {
 	<-done
 }
 func init() {
-	/*err := godotenv.Load("./app/.env")
-	if err != nil {
-		log.Fatal("Error loading .env file: ", err)
-	}*/
 	NumProcesses, _ = strconv.Atoi(os.Getenv("NUM_PROCESS"))
-	TcpStartingPort, _ = strconv.Atoi(os.Getenv("TCP_PORT"))
+	TcpPort, _ = strconv.Atoi(os.Getenv("TCP_PORT"))
 	RPCPort, _ = strconv.Atoi(os.Getenv("RPC_PORT"))
 	MaxRetries, _ = strconv.Atoi(os.Getenv("MAX_RETRIES"))
 }
@@ -140,7 +135,7 @@ func main() {
 	initialBalance, _ := strconv.Atoi(os.Args[2])
 
 	// Creo nuovo nodo
-	node := NewNode(processID, TcpStartingPort, NumProcesses, initialBalance)
+	node := NewNode(processID, TcpPort, NumProcesses, initialBalance)
 
 	// Creo server RPC
 	rpcServer := &RPCServer{node: node}

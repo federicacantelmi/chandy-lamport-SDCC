@@ -27,24 +27,23 @@ type ProcessStruct struct {
 	TCPAddr             *net.TCPAddr       // Indirizzo TCP per identificare il processo
 	InternStateMutex    sync.Mutex         // Mutex usato per sincronizzare l'accesso allo stato interno quando viene avviato uno snapshot e si deve prelevare lo stato del processo
 	channels            utils.NodeChannels // Canali usati per comunicare con le altre due parti
-	sendingMarkers      bool
 	sendingMarkersMutex sync.Mutex
-	sendingMarkersCond  *sync.Cond
+	inMsgQueue          []utils.Message
+	inMsgQueueMutex     sync.Mutex
 }
 
 func StartProcess(processID int, processNumber int, TCPAddr *net.TCPAddr, initialBalance int, channels utils.NodeChannels, maxRet int /*, procList map[int]*net.TCPAddr */) *ProcessStruct {
 
 	p := &ProcessStruct{
+
 		ProcessID:           processID,
 		Balance:             initialBalance,
 		processNumber:       processNumber,
 		TCPAddr:             TCPAddr,
 		InternStateMutex:    sync.Mutex{},
 		channels:            channels,
-		sendingMarkers:      false,
 		sendingMarkersMutex: sync.Mutex{},
 	}
-	p.sendingMarkersCond = sync.NewCond(&p.sendingMarkersMutex)
 	maxRetries = maxRet
 	fmt.Printf("Starting process %d with balance: %d\n", p.ProcessID, p.Balance)
 
@@ -65,20 +64,16 @@ func (p *ProcessStruct) runCommand() {
 					fmt.Printf("Process %d command: received command to send message to process %d: %d\n", p.ProcessID, msg.Receiver, msg.Content)
 					go func(msg utils.Message) {
 						p.sendingMarkersMutex.Lock()
-						for p.sendingMarkers {
-							p.sendingMarkersCond.Wait()
-						}
-						p.sendingMarkersMutex.Unlock()
 						if err := p.sendMessage(msg); err != nil {
 							cmd.ReplyChannel <- err
 						} else {
 							cmd.ReplyChannel <- nil
 						}
+						p.sendingMarkersMutex.Unlock()
 					}(msg)
 				}
 			case "SendMarkers":
 				if msg, ok := cmd.Payload.(utils.Message); ok {
-					// fmt.Printf("Process %d command: Received command to send markers\n", p.ProcessID)
 					go func(msg utils.Message) {
 						if err := p.sendMarkers(msg.SnapshotID); err != nil {
 							log.Printf("Error in sending markers: %v", err)
@@ -87,11 +82,10 @@ func (p *ProcessStruct) runCommand() {
 				}
 			case "MutexRelease":
 				go func() {
-					p.sendingMarkersMutex.Lock()
-					p.sendingMarkers = false
-					p.sendingMarkersCond.Signal()
 					p.sendingMarkersMutex.Unlock()
 				}()
+			case "StartingSnapshot":
+				p.sendingMarkersMutex.Lock()
 			case "ForcedTermination":
 				fmt.Printf("Process %d balance: %d\n", p.ProcessID, p.Balance)
 			default:
@@ -109,13 +103,11 @@ func (p *ProcessStruct) sendMessage(msg utils.Message) error {
 	msg.Type = utils.MESSAGE
 	msg.Sender = p.ProcessID
 	receiver := msg.Receiver
-	// content := msg.Content
 
 	tcpAddress := fmt.Sprintf("process%d:8081", msg.Receiver)
 	var conn net.Conn
 	var err error
 	for i := 0; i < maxRetries; i++ {
-		//conn, err = net.Dial("tcp", utils.ProcessList[receiver].String())
 		conn, err = net.Dial("tcp", tcpAddress)
 		if err != nil {
 			if i == maxRetries-1 {
@@ -161,8 +153,6 @@ func (p *ProcessStruct) sendMarkers(snapshotID int) error {
 
 	// Prelevo per ogni processo attivo nel sistema l'indirizzo associato e apro connessione
 	for i := 0; i < len(utils.ProcessList); i++ {
-		// tcpAddr := utils.ProcessList[i+1]
-
 		if i+1 == p.ProcessID {
 			// Salto iterazione in cui invierei marker a me stesso
 			continue
@@ -171,7 +161,6 @@ func (p *ProcessStruct) sendMarkers(snapshotID int) error {
 		var conn net.Conn
 		var err error
 		for i := 0; i < maxRetries; i++ {
-			//conn, err = net.Dial("tcp", tcpAddr.String())
 			conn, err = net.Dial("tcp", tcpAddress)
 			if err != nil {
 				if i == maxRetries-1 {
@@ -197,11 +186,11 @@ func (p *ProcessStruct) sendMarkers(snapshotID int) error {
 			log.Println("Error closing connection:", err)
 		}
 
-		// fmt.Printf("Process %d: sent marker to %d\n", p.ProcessID, i+1)
+		fmt.Printf("Process %d: sent marker to %d for snapshot %d\n", p.ProcessID, i+1, snapshotID)
 	}
-	p.sendingMarkersMutex.Lock()
-	p.sendingMarkers = false
-	p.sendingMarkersCond.Signal()
+	//p.sendingMarkersMutex.Lock()
+	//p.sendingMarkers = false
+	//p.sendingMarkersCond.Signal()
 	p.sendingMarkersMutex.Unlock()
 	return nil
 }
@@ -232,29 +221,45 @@ func (p *ProcessStruct) handleConnection(conn net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("Error decoding JSON: %s\n", err)
 	}
-
-	// Verifica il tipo di messaggio
-	switch msg.Type {
-	case utils.MESSAGE:
-		p.handleMessage(msg)
-		p.channels.SnapshotProcessChannel <- utils.Command{Name: "MessageReceived", Payload: msg}
-		// fmt.Printf("Process %d: message of type 'Message' handled\n", p.ProcessID)
-	case utils.MARKER:
-		p.sendingMarkersMutex.Lock()
-		p.sendingMarkers = true
-		p.sendingMarkersMutex.Unlock()
-		p.channels.SnapshotProcessChannel <- utils.Command{Name: "MarkerReceived", Payload: msg}
-		// fmt.Printf("Process %d: message of type 'Marker' handled\n", p.ProcessID, msg)
-	default:
-		return fmt.Errorf("Unknown message type: %d\n", msg.Type)
-	}
+	p.inMsgQueueMutex.Lock()
+	p.inMsgQueue = append(p.inMsgQueue, msg)
+	p.inMsgQueueMutex.Unlock()
 	return nil
+}
+
+func (p *ProcessStruct) processMessageQueue() {
+	for {
+		p.inMsgQueueMutex.Lock()
+		if len(p.inMsgQueue) == 0 {
+			p.inMsgQueueMutex.Unlock()
+			time.Sleep(1 * time.Second)
+		} else {
+			// Estraggo primo elemento della inMsgQueue
+			msg := p.inMsgQueue[0]
+			fmt.Printf("%v+", msg)
+			// Elimino elemento appena estratto dalla inMsgQueue
+			p.inMsgQueue = p.inMsgQueue[1:]
+			p.inMsgQueueMutex.Unlock()
+			// Verifico tipo di messaggio ricevuto
+			switch msg.Type {
+			case utils.MESSAGE:
+				p.sendingMarkersMutex.Lock()
+				p.handleMessage(msg)
+				p.channels.SnapshotProcessChannel <- utils.Command{Name: "MessageReceived", Payload: msg}
+				p.sendingMarkersMutex.Unlock()
+			case utils.MARKER:
+				p.sendingMarkersMutex.Lock()
+				p.channels.SnapshotProcessChannel <- utils.Command{Name: "MarkerReceived", Payload: msg}
+			default:
+				fmt.Errorf("Unknown message type: %d\n", msg.Type)
+			}
+		}
+	}
 }
 
 // Funzione che rimane in attesa sulla porta per ricevere messaggi da altri processi
 func (p *ProcessStruct) listenOnChannel() {
-
-	// listener, err := net.Listen("tcp", ":"+strconv.Itoa(p.TCPAddr.Port))
+	go p.processMessageQueue()
 	listener, err := net.Listen("tcp", ":8081")
 	if err != nil {
 		log.Fatalf("Error during listening process: %s", err)

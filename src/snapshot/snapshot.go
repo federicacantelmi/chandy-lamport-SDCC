@@ -10,9 +10,11 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 )
 
 type SnapshotFile struct {
+	Timestamp    time.Time           `json:"timestamp"`
 	SnapshotID   int                 `json:"snapshot_id"`
 	ProcessID    int                 `json:"process_id"`
 	InternState  int                 `json:"intern_state"`
@@ -30,7 +32,6 @@ const (
 	ChannelStatusGoing = "going"
 )
 
-// todo: capisci se e come usarla
 type Process interface {
 	GetProcessID() int
 	GetTCPAddress() *net.TCPAddr
@@ -42,10 +43,11 @@ type ChannelState struct {
 }
 
 type Snapshot struct {
+	Timestamp            time.Time
 	ProcessId            int                   // Id del processo
 	SnapshotId           int                   // Id dello snapshot, ovvero del processo che ha iniziato lo snapshot
 	balance              int                   // Balance interno dello snapshot process
-	channelStates        map[int]*ChannelState // Mappa che associa all'id di ogni altro processo, un ChannelState
+	inputChannelStates   map[int]*ChannelState // Mappa che associa all'id di ogni altro processo, un ChannelState
 	receivedMarkers      map[int]bool          // Mappa che associa all'id di ogni altro processo un booleano per capire se ha ricevuto o meno il marker da quel processo
 	channelsStateMutex   sync.Map              // Mutex che sincronizza l'accesso ad ogni canale
 	receivedMarkersMutex sync.Mutex            // Mutex che sincronizza l'accesso alla mappa receivedMarkers
@@ -64,7 +66,7 @@ func CreateSnapshotProcess(process *process.ProcessStruct, channels utils.NodeCh
 		Process:  process,
 		channels: channels,
 	}
-	fmt.Printf("Snapshot process %d created succesfully\n", process.ProcessID)
+	fmt.Printf("Snapshot Process %d created succesfully\n", process.ProcessID)
 	go snapshotProcess.listen()
 	return &snapshotProcess
 }
@@ -96,10 +98,11 @@ func (sp *SnapshotProcess) listen() {
 
 func (sp *SnapshotProcess) createSnapshot(processId int, snapshotId int, localState int, channelState map[int]*ChannelState, receivedMarkers map[int]bool, repChannel chan error) *Snapshot {
 	return &Snapshot{
+		Timestamp:          time.Now(),
 		ProcessId:          processId,
 		SnapshotId:         snapshotId,
 		balance:            localState,
-		channelStates:      channelState,
+		inputChannelStates: channelState,
 		receivedMarkers:    receivedMarkers,
 		channelsStateMutex: sync.Map{},
 		replyChannel:       repChannel,
@@ -107,8 +110,8 @@ func (sp *SnapshotProcess) createSnapshot(processId int, snapshotId int, localSt
 }
 
 func (sp *SnapshotProcess) startSnapshot(replyChannel chan error) {
-	// fmt.Printf("Process %d: starting snapshot\n", sp.Process.GetProcessID())
 
+	sp.channels.ProcessChannel <- utils.Command{Name: "StartingSnapshot", Payload: nil}
 	channelState := make(map[int]*ChannelState)
 
 	receivedMarkers := make(map[int]bool)
@@ -131,7 +134,6 @@ func (sp *SnapshotProcess) startSnapshot(replyChannel chan error) {
 
 	// Chiedo a Process di inviare i markers agli altri processi
 	sp.channels.ProcessChannel <- utils.Command{Name: "SendMarkers", Payload: utils.Message{Sender: sp.Process.GetProcessID(), SnapshotID: sp.Process.GetProcessID()}}
-	// todo: gestisco errore ????
 }
 
 // Funzione che salva uno Snapshot per il processo quando va terminato
@@ -149,6 +151,7 @@ func saveSnapshot(snapshot *Snapshot) error {
 	}(file)
 
 	snapshotFile := SnapshotFile{
+		Timestamp:    snapshot.Timestamp,
 		SnapshotID:   snapshot.SnapshotId,
 		ProcessID:    snapshot.ProcessId,
 		InternState:  snapshot.balance,
@@ -156,7 +159,7 @@ func saveSnapshot(snapshot *Snapshot) error {
 	}
 
 	// Se ho ricevuto messaggi, salvo la lista dei messaggi; se non ho ricevuto messaggi, salvo la stringa "empty"
-	for sender, channelState := range snapshot.channelStates {
+	for sender, channelState := range snapshot.inputChannelStates {
 		if channelState == nil || len(channelState.Messages) == 0 {
 			snapshotFile.ChannelState[sender] = ChannelStatusEmpty
 		} else {
@@ -188,7 +191,7 @@ func terminateLocalSnapshot(snapshot *Snapshot) {
 	}
 
 	snapshotListMutex.Lock()
-	//elimino snapshot dalla snapshot list
+	// Elimino snapshot dalla snapshot list
 	for i, snap := range snapshotList {
 		if snap.SnapshotId == snapshot.SnapshotId {
 			snapshotList = append(snapshotList[:i], snapshotList[i+1:]...)
@@ -204,7 +207,6 @@ func handleMessageReceived(message utils.Message) {
 
 	// Se non c'è istanza attiva di snapshot, non devo salvare il messaggio nello stato di nessun canale
 	if snapshotList == nil {
-		// fmt.Printf("Process %d: no snapshot active -> no need to save message in a channel state\n", message.Receiver)
 		snapshotListMutex.Unlock()
 		return
 	}
@@ -221,7 +223,7 @@ func handleMessageReceived(message utils.Message) {
 		channelStateMutex.Lock()
 
 		// Prelevo (se esiste) stato del canale con il processo sender relativo allo snapshot su cui sto iterando
-		chanState, exists := snapshot.channelStates[message.Sender]
+		chanState, exists := snapshot.inputChannelStates[message.Sender]
 		if !exists {
 			// Se non esiste stato del canale -> lo creo perché vuol dire che è il primo messaggio che ricevo
 			chanState = &ChannelState{
@@ -231,14 +233,14 @@ func handleMessageReceived(message utils.Message) {
 
 			// Aggiungo il messaggio alla lista di messaggi dello stato del canale con il processo sender relativo allo snapshot su cui sto iterando
 			chanState.Messages = append(chanState.Messages, message.Content)
-			snapshot.channelStates[message.Sender] = chanState
-			fmt.Printf("Process %d: created channelState for first message: %v\n", snapshot.ProcessId, snapshot.channelStates[message.Sender].Messages)
+			snapshot.inputChannelStates[message.Sender] = chanState
+			fmt.Printf("Process %d: created channelState for first message: %v\n", snapshot.ProcessId, snapshot.inputChannelStates[message.Sender].Messages)
 		} else {
 			// Se esiste stato del canale e vale "going" (quindi devo ancora ricevere marker per questo snapshot da quel processo), aggiungo il messaggio
 			if chanState.Status == ChannelStatusGoing {
 				chanState.Messages = append(chanState.Messages, message.Content)
 				fmt.Printf("Process %d: added message to channel state %d for snapshot %d. Now channelState messages are: %v\n", snapshot.ProcessId, message.Sender, snapshot.SnapshotId, chanState.Messages)
-				snapshot.channelStates[message.Sender] = chanState
+				snapshot.inputChannelStates[message.Sender] = chanState
 			} else {
 				// Se lo stato del canale esiste ma non è going significa che ho già ricevuto il marker per questo snapshot -> non devo aggiungere il messaggio allo stato del canale
 				continue
@@ -266,12 +268,11 @@ func (sp *SnapshotProcess) handleMarker(marker utils.Message, p *process.Process
 			continue
 		}
 	}
-	snapshotListMutex.Unlock()
 
 	// Se non esiste un'istanza di SnapProcess attiva relativa a questo snapshot -> la creo
 	if !active {
 
-		fmt.Printf("ProcessStruct %d: received marker from %d but snapshot not active\n", p.GetProcessID(), marker.Sender)
+		fmt.Printf("ProcessStruct %d: received marker from %d for snapshot %d but snapshot not active\n", p.GetProcessID(), marker.Sender, marker.SnapshotID)
 
 		// Creo la lista di received markers relativa a questo snapshot
 		sp.receivedMarkersMutex.Lock()
@@ -283,12 +284,12 @@ func (sp *SnapshotProcess) handleMarker(marker utils.Message, p *process.Process
 		sp.receivedMarkersMutex.Unlock()
 
 		// Creo lo snapshot
-		snapshot := sp.createSnapshot(p.GetProcessID(), marker.SnapshotID, sp.Process.GetBalance(), make(map[int]*ChannelState), receivedMarkers, nil)
+		sp.Process.InternStateMutex.Lock()
+		snapshot := sp.createSnapshot(p.GetProcessID(), marker.SnapshotID, sp.Process.Balance, make(map[int]*ChannelState), receivedMarkers, nil)
+		sp.Process.InternStateMutex.Unlock()
 
 		// Aggiungo alla snapshotList lo snapshot appena creato
-		snapshotListMutex.Lock()
 		snapshotList = append(snapshotList, snapshot)
-		snapshotListMutex.Unlock()
 
 		// Siccome è il primo marker relativo a questo snapshot, invio marker agli altri processi
 		sp.channels.ProcessChannel <- utils.Command{Name: "SendMarkers", Payload: utils.Message{Sender: snapshot.ProcessId, SnapshotID: snapshot.SnapshotId}}
@@ -297,6 +298,7 @@ func (sp *SnapshotProcess) handleMarker(marker utils.Message, p *process.Process
 		sp.channels.ProcessChannel <- utils.Command{Name: "MutexRelease", Payload: utils.Message{}}
 	}
 
+	snapshotListMutex.Unlock()
 	if newSnapshot == nil {
 		log.Println("Error: snapProcess is nil")
 		return
@@ -315,20 +317,19 @@ func (sp *SnapshotProcess) handleMarker(marker utils.Message, p *process.Process
 	channelStateMutex.Lock()
 
 	// Se non esiste chanState significa che non ho ricevuto messaggi da quel canale dopo che è stato avviato lo snapshot, altrimenti l'avrei creata per aggiungerci i messaggi ricevuti
-	chanState, exists := newSnapshot.channelStates[marker.Sender]
+	chanState, exists := newSnapshot.inputChannelStates[marker.Sender]
 	if !exists {
 		chanState = &ChannelState{
 			Messages: make([]int, 0),
 			Status:   ChannelStatusEmpty,
 		}
-		fmt.Printf("Process %d: marking channel %d as empty\n", newSnapshot.ProcessId, marker.Sender)
+		fmt.Printf("Process %d: marking channel %d as empty for snapshot %d\n", newSnapshot.ProcessId, marker.Sender, marker.SnapshotID)
 	} else {
 		chanState.Status = ChannelStatusDone
-		fmt.Printf("Process %d: marking channel %d as done\n", newSnapshot.ProcessId, marker.Sender)
+		fmt.Printf("Process %d: marking channel %d as done for snapshot %d\n", newSnapshot.ProcessId, marker.Sender, marker.SnapshotID)
 	}
 
-	newSnapshot.channelStates[marker.Sender] = chanState
-	// fmt.Printf("ProcessStruct %d: channelState for channel %d: %v\n", p.GetProcessID(), marker.Sender, chanState)
+	newSnapshot.inputChannelStates[marker.Sender] = chanState
 	channelStateMutex.Unlock()
 
 	// Controllo se ho ricevuto tutti i marker
@@ -343,7 +344,7 @@ func (sp *SnapshotProcess) handleMarker(marker utils.Message, p *process.Process
 	sp.receivedMarkersMutex.Unlock()
 	// Se quello appena ricevuto è l'ultimo marker che mi aspettavo
 	if allMarkersReceived {
-		fmt.Printf("ProcessStruct %d: received all markers\n", newSnapshot.ProcessId)
+		fmt.Printf("ProcessStruct %d: received all markers for snapshot %d\n", newSnapshot.ProcessId, marker.SnapshotID)
 		terminateLocalSnapshot(newSnapshot)
 	}
 }

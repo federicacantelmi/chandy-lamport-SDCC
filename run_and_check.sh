@@ -26,11 +26,11 @@ done < "$ENV_FILE"
 
 echo "Bilancio iniziale totale: $initial_balance"
 
-# Avvia i container Docker specificati nel docker-compose file
+# Avvio i container Docker specificati nel docker-compose file
 docker compose down
 docker-compose up -d --build
 
-# Controlla se l'avvio è riuscito
+# Controllo se l'avvio è riuscito
 if [ $? -ne 0 ]; then
     echo "Errore: Avvio dei container fallito."
     exit 1
@@ -45,7 +45,7 @@ echo "In attesa che il container '$CLIENT_CONTAINER' termini..."
 docker wait "$CLIENT_CONTAINER"
 
 # Prelevo i file dai container dei processi
-PROCESS_CONTAINERS=("process1" "process2" "process3" "process4" "process5")
+PROCESS_CONTAINERS=("process1" "process2" "process3")
 
 # Creo una directory per salvare gli snapshot
 SNAPSHOT_DIR="snapshots"
@@ -88,12 +88,12 @@ done
 # Confronto i valori ottenuti con il bilancio iniziale
 
 for snapshot_id in "${!snapshot_sums[@]}"; do
-    # Calcola il bilancio totale dello snapshot corrente (stato interno + canali)
+    # Calcolo il bilancio totale dello snapshot corrente (stato interno + canali)
     total_snapshot_balance=$(echo "${snapshot_sums[$snapshot_id]}" | bc)
 
     echo "Bilancio totale per Snapshot ID $snapshot_id: $total_snapshot_balance"
 
-    # Confronta con il bilancio iniziale
+    # Confronto con il bilancio iniziale
     if [ "$(echo "$total_snapshot_balance == $initial_balance" | bc)" -eq 1 ]; then
         echo "Successo: Il bilancio totale dello Snapshot con ID $snapshot_id corrisponde al bilancio iniziale."
     else
