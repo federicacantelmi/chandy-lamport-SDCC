@@ -26,8 +26,7 @@ Se si vogliono osservare gli output di uno specifico container si può eseguire 
 - `process<numero del processo>`, nel caso del container di un processo.
 - `client`, nel caso del container in cui esegue il client.
 
-Se si vuole pulire del tutto l'ambiente di esecuzione si può eseguire il comando `sudo docker rm $(sudo docker ps -a -q)`
-per eliminare tutti i container.
+Se si vogliono eliminare i container si può eseguire il comando `sudo docker-compose down`.
 
 Per arrestare del tutto Docker: `sudo service docker stop 2> /dev/null && sudo systemctl stop docker.socket`.
 
