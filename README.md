@@ -14,7 +14,7 @@ Successivamente:
    2. `cd chandy-lamport-SDCC`
 3. Lancio del progetto con Docker Compose:
    1. avviare il servizio di docker: `sudo service docker start`
-   2. eseguo il file: `sudo bash ./run_and_check`
+   2. eseguo il file: `sudo bash ./run_and_check.sh`
 
 A questo punto nel terminale verranno mostrati:
 1. La somma dei bilanci iniziali dei dei processi.
