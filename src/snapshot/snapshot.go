@@ -173,7 +173,7 @@ func saveSnapshot(snapshot *Snapshot) error {
 	if err := encoder.Encode(snapshotFile); err != nil {
 		return fmt.Errorf("Error encoding snapshot file: %s\n", err)
 	}
-	fmt.Printf("Terminated and saved snapshot to file: %s", filename)
+	fmt.Printf("Terminated and saved snapshot to file: %s\n", filename)
 	return nil
 }
 
